@@ -1,0 +1,26 @@
+[package]
+name = "proofpay_contract"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+soroban-sdk = { workspace = true, features = ["alloc"] }
+ultrahonk_soroban_verifier = { workspace = true }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils", "alloc"] }
+soroban-poseidon = "26.0.0"
+num-bigint = "0.4"
+
+[features]
+std = []
+testutils = []
+
+[[example]]
+name = "populate_publics"
+path = "examples/populate_publics.rs"
+required-features = ["std"]
+

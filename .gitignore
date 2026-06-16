@@ -1,0 +1,16 @@
+.next/
+node_modules/
+target/
+dist/
+out/
+.env
+.env.local
+.contract_id*
+.proofpay/
+certificates/
+circuits/**/target/
+circuits/proofpay/Prover.toml
+contracts/**/test_snapshots/
+*.log
+tsconfig.tsbuildinfo
+*:Zone.Identifier
