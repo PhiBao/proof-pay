@@ -4,12 +4,12 @@ import { toFieldHex, type ProofpayPersona } from "@/lib/demo-data";
 
 export * from "@/lib/demo-data";
 
-export async function loadCircuitProfile(persona: ProofpayPersona) {
+export async function loadCircuitProfileFile(proverName: string) {
   const file = path.join(
     process.cwd(),
     "circuits",
     "proofpay",
-    `Prover.${persona}.toml`
+    `Prover.${proverName}.toml`
   );
   const content = await readFile(file, "utf8");
   const pickRaw = (name: string) => {
@@ -22,7 +22,7 @@ export async function loadCircuitProfile(persona: ProofpayPersona) {
   };
 
   return {
-    persona,
+    proverName,
     root: pickField("root"),
     nullifier: pickField("nullifier"),
     payeeHash: pickField("payee_hash"),
@@ -34,3 +34,7 @@ export async function loadCircuitProfile(persona: ProofpayPersona) {
   };
 }
 
+export async function loadCircuitProfile(persona: ProofpayPersona) {
+  const profile = await loadCircuitProfileFile(persona);
+  return { ...profile, persona };
+}

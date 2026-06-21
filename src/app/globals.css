@@ -87,6 +87,7 @@ code {
 
 .brandLockup {
   gap: 11px;
+  text-decoration: none;
 }
 
 .brandMark {
@@ -144,7 +145,8 @@ code {
   opacity: 0.72;
 }
 
-.checkoutHero {
+.checkoutHero,
+.flowHero {
   min-height: 620px;
   display: grid;
   grid-template-columns: minmax(0, 1.55fr) minmax(340px, 0.85fr);
@@ -153,8 +155,22 @@ code {
   margin-top: 22px;
 }
 
+@media (min-width: 981px) {
+  .flowHero {
+    grid-template-columns: minmax(0, 1fr) minmax(360px, 420px);
+    align-items: start;
+  }
+
+  .flowPanel,
+  .claimPanel {
+    min-width: 0;
+  }
+}
+
 .checkoutPanel,
+.flowPanel,
 .proofPanel,
+.claimPanel,
 .infoPanel,
 .auditTrail {
   border: 1px solid var(--line);
@@ -163,15 +179,18 @@ code {
   box-shadow: var(--shadow);
 }
 
-.checkoutPanel {
+.checkoutPanel,
+.flowPanel {
   padding: 28px;
 }
 
-.proofPanel {
+.proofPanel,
+.claimPanel {
   padding: 22px;
 }
 
-.invoiceHeader {
+.invoiceHeader,
+.flowHeader {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -225,13 +244,24 @@ h3 {
 
 .invoiceForm {
   display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.3fr) minmax(120px, 0.55fr) minmax(180px, 0.8fr);
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 10px;
   margin-top: 22px;
   padding: 14px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fbfdfc;
+}
+
+.invoiceForm .field:nth-of-type(1),
+.invoiceForm .field:nth-of-type(3),
+.invoiceForm .field:nth-of-type(4),
+.invoiceForm .field:nth-of-type(5) {
+  grid-column: span 2;
+}
+
+.invoiceForm .field:nth-of-type(2) {
+  grid-column: span 4;
 }
 
 .field {
@@ -316,7 +346,14 @@ h3 {
   font-size: 1.3rem;
 }
 
+.compactAmount {
+  min-height: 106px;
+  margin: 26px 0 18px;
+}
+
 .partyGrid,
+.claimSummary,
+.claimPreview,
 .metricRows,
 .privacyGrid,
 .auditGrid {
@@ -326,6 +363,12 @@ h3 {
 
 .partyGrid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.claimSummary,
+.claimPreview {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 22px;
 }
 
 .dataPoint {
@@ -360,6 +403,10 @@ h3 {
   gap: 8px;
   margin: 24px 0 0;
   padding: 0;
+}
+
+.stepList.fourSteps {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .stepList li {
@@ -495,6 +542,54 @@ h3 {
   gap: 8px;
 }
 
+.linkBox {
+  min-height: 86px;
+  display: grid;
+  align-items: center;
+  margin-top: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfdfc;
+  padding: 12px;
+}
+
+.linkBox code {
+  color: var(--muted);
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+
+.buttonRow {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.secondaryLink {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  padding: 0 12px;
+  text-decoration: none;
+  font-weight: 850;
+}
+
+.secondaryLink:hover {
+  border-color: var(--line-strong);
+}
+
+.disabledLink {
+  pointer-events: none;
+  opacity: 0.52;
+}
+
 .linkList a {
   width: 100%;
   min-height: 42px;
@@ -615,6 +710,9 @@ h3 {
 
 .secondaryAction {
   min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   gap: 8px;
   border: 1px solid var(--line);
   background: var(--surface);
@@ -639,6 +737,7 @@ h3 {
 
 @media (max-width: 980px) {
   .checkoutHero,
+  .flowHero,
   .privacyGrid,
   .auditGrid {
     grid-template-columns: 1fr;
@@ -668,7 +767,8 @@ h3 {
   }
 
   .appHeader,
-  .invoiceHeader {
+  .invoiceHeader,
+  .flowHeader {
     align-items: stretch;
     flex-direction: column;
   }
@@ -679,7 +779,9 @@ h3 {
   }
 
   .checkoutPanel,
-  .proofPanel {
+  .flowPanel,
+  .proofPanel,
+  .claimPanel {
     padding: 18px;
   }
 
@@ -698,8 +800,23 @@ h3 {
   }
 
   .partyGrid,
+  .claimSummary,
+  .claimPreview,
   .stepList,
+  .stepList.fourSteps,
   .invoiceForm {
+    grid-template-columns: 1fr;
+  }
+
+  .invoiceForm .field:nth-of-type(1),
+  .invoiceForm .field:nth-of-type(2),
+  .invoiceForm .field:nth-of-type(3),
+  .invoiceForm .field:nth-of-type(4),
+  .invoiceForm .field:nth-of-type(5) {
+    grid-column: 1;
+  }
+
+  .buttonRow {
     grid-template-columns: 1fr;
   }
 }

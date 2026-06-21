@@ -1,48 +1,66 @@
 # Live Proof
 
+This document records the current ProofPay testnet evidence and local verification path.
+
 ## Network
 
 - Network: Stellar testnet
 - RPC: `https://soroban-testnet.stellar.org`
-- Source account: `proofpay-deployer`
+- Source account alias used for deployment: `proofpay-deployer`
 
 ## Contracts
 
-- Verifier: `CCPWNL7ASCMTOCKFPLKSQYMFSZEIZ7PI3MRNPU4OAZGSG2EOXSWD6LXW`
-- ProofPay: `CDMJGLNX4DL4ZUUMR6LOWKL6SAOF5DHN33ILW5Z46TNSRWR2GXPRUEDD`
+- Verifier: `CC7TO4Y3ZHTFBPSXZXC6Y2WN4PJ5MGXTI5YOENRDFATSLOSLWARI2JCO`
+- ProofPay: `CAVFYHBACVPGVY6COJ62UU7XHPJJZXQ2FMMRRGHBODRV3RGXJYPGIDKA`
 - Registered root: `0x143e346ea19e713db9f6a128bc6852ce185211dc659193bbcad66e2956b6f095`
 - Verifier WASM hash: `b737fe9e4d7d411df508526ab30f7b5b8e9beb11e888003d0d4e255724004b18`
-- ProofPay WASM hash: `39b36bbafaa74faec09829520c793065698873f95a737345405218723efa2af2`
+- ProofPay WASM hash: `dfad339ec6f5ac07cce786d47755794d355f390cf3fb3ab00433a903172862f1`
 
-## Transactions
+## Deployment Transactions
 
-- Verifier deploy: https://stellar.expert/explorer/testnet/tx/babdbd1c7da52a17ed9b3a54460df68e58411ea943a4a4b40ee5d091975a06fb
-- ProofPay deploy: https://stellar.expert/explorer/testnet/tx/17750eb732317d8ac18036f16072b437ce5946b0d76bae66f1c1b82dfcfb8077
-- Root registration: https://stellar.expert/explorer/testnet/tx/d4882534d9be19ff84f203a83dba5be0c19dba208ea169d2e7e2c54a83551359
-- Proof verification: https://stellar.expert/explorer/testnet/tx/f6825fa68181c29db87f271e851ad1b75ac99c617977cc7b38c1f5c21e6d55cc
+- Verifier deploy: https://stellar.expert/explorer/testnet/tx/445b0e9b8801b5111ff8677afbe1220acd278e3f5319328ae619a71cd8bc93a4
+- ProofPay deploy: https://stellar.expert/explorer/testnet/tx/22a5db0a11a45aa9506b46c1a02a312eaaa99f9b3fb222c31507245a2cef05e2
+- Issuer authorization: https://stellar.expert/explorer/testnet/tx/e4326f00ad33b5f12510fad10750f1a5adb728fd8211ba7669ce23f52ae69663
+- Root registration: https://stellar.expert/explorer/testnet/tx/0bf8421cf0bd06db8362fc7b80d52a397f3dfd2bc92403b5a996025d8d9bda93
+- Proof verification: https://stellar.expert/explorer/testnet/tx/175a524cd9c62b7808a38e5f15c80f1f99dc3335be20f9be13d0e068ef2b939d
 
-## Recorded Escrow Trace
+## Recorded Escrow Transaction Trace
 
-- Escrow invoice created: https://stellar.expert/explorer/testnet/tx/668adf31422e3177af617fd88b524c579d5910cc9879e15a8b77d61dd0845b1c
-- Escrow funded: https://stellar.expert/explorer/testnet/tx/93987cc2c14b0b732713d9614209593e32647e2c11ad1879934f0bb03859fc55
-- Escrow released by proof: https://stellar.expert/explorer/testnet/tx/43ec2d74b41920d2e07e9b7e4510b05a8fec0aa66dcd273627a4b2057e509ac6
+- Escrow invoice created: https://stellar.expert/explorer/testnet/tx/c9325ccdfda0863b4bb0f51631fe6dd230bfe8df465b917c9b87f7cb37f5d6e0
+- Escrow funded: https://stellar.expert/explorer/testnet/tx/099e45c419d1a768b212f02692a3fab8322f318736499e983dcfc16c564a183f
+- Escrow released by proof: https://stellar.expert/explorer/testnet/tx/abe1a23e2f89f24c02ab6e2d0c1424772c243a77818265d99af21a21b53b8fef
 
-## Escrow State
+## Current Invoice Simulation Evidence
 
-- Invoice ID: `1`
-- Amount: `75000000` stroops
-- Released: `true`
-- Nullifier used: `true`
+Invoice `4` on the current deployment is funded and unreleased. The app generated a fresh proof for that invoice's stored hash:
 
-## Local Evidence
+```text
+0x1b77246d373515a1010a95c382d7c6ea3eaf7e007ac4ae9671f1e0ee3ecda604
+```
+
+The generated `public_inputs` artifact matched that hash and did not contain the old static fixture hash `0x0000000000000000000000000000000000000000000000000000000001ce2026`.
+
+Local simulation of `verify_and_release` for invoice `4` succeeded and emitted:
+
+- token transfer of `75000000` stroops to the contractor
+- `InvoiceReleasedEvent`
+- nullifier `0x1573b745b0256910f68fd1b930d7317afabf2e1b14491f9dc7d49a0b48e8be58`
+
+The simulation used `--send no`, so it verified execution without submitting the release transaction.
+
+## Verification Commands
 
 ```bash
 pnpm typecheck
+pnpm lint
 pnpm build
 cargo test --workspace
 stellar contract build
 just build-circuit
 just circuit-negative
 just verify-testnet
-just exercise-testnet-escrow
 ```
+
+## Public-Input Mismatch Guard
+
+The app now validates that the generated proof artifact bytes match the JSON public inputs before returning a proof to the claim page. This prevents the browser from submitting stale `public_inputs` bytes for a different invoice hash.

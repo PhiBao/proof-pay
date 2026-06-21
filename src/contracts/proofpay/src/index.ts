@@ -48,7 +48,8 @@ export const Errors = {
   12: {message:"VerificationFailed"},
   13: {message:"NullifierUsed"},
   14: {message:"PublicInputMismatch"},
-  15: {message:"NotExpired"}
+  15: {message:"NotExpired"},
+  16: {message:"IssuerNotTrusted"}
 }
 
 
@@ -91,6 +92,7 @@ export interface ParsedInputs {
 
 
 
+
 export interface Client {
   /**
    * Construct and simulate a get_root transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
@@ -118,6 +120,11 @@ export interface Client {
   register_root: ({root, issuer, expires_at}: {root: Buffer, issuer: string, expires_at: u64}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
 
   /**
+   * Construct and simulate a revoke_issuer transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   */
+  revoke_issuer: ({issuer}: {issuer: string}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+
+  /**
    * Construct and simulate a cancel_expired transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
    */
   cancel_expired: ({invoice_id}: {invoice_id: u64}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
@@ -126,6 +133,16 @@ export interface Client {
    * Construct and simulate a create_invoice transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
    */
   create_invoice: ({payer, payee, token, amount, root, payee_hash, invoice_hash, min_total_cents, min_paid_count, period_bucket, expires_at}: {payer: string, payee: string, token: string, amount: i128, root: Buffer, payee_hash: Buffer, invoice_hash: Buffer, min_total_cents: u128, min_paid_count: u32, period_bucket: u32, expires_at: u64}, options?: MethodOptions) => Promise<AssembledTransaction<Result<u64>>>
+
+  /**
+   * Construct and simulate a authorize_issuer transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   */
+  authorize_issuer: ({issuer}: {issuer: string}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+
+  /**
+   * Construct and simulate a is_issuer_trusted transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   */
+  is_issuer_trusted: ({issuer}: {issuer: string}, options?: MethodOptions) => Promise<AssembledTransaction<boolean>>
 
   /**
    * Construct and simulate a is_nullifier_used transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
@@ -157,7 +174,7 @@ export class Client extends ContractClient {
   }
   constructor(public readonly options: ContractClientOptions) {
     super(
-      new ContractSpec([ "AAAABAAAAAAAAAAAAAAABUVycm9yAAAAAAAADwAAAAAAAAASQWxyZWFkeUluaXRpYWxpemVkAAAAAAABAAAAAAAAAAxVbmF1dGhvcml6ZWQAAAACAAAAAAAAAAtSb290RXhwaXJlZAAAAAADAAAAAAAAABFSb290Tm90UmVnaXN0ZXJlZAAAAAAAAAQAAAAAAAAADkludmFsaWRJbnZvaWNlAAAAAAAFAAAAAAAAAA9JbnZvaWNlTm90Rm91bmQAAAAABgAAAAAAAAAQSW52b2ljZU5vdEZ1bmRlZAAAAAcAAAAAAAAADUludm9pY2VDbG9zZWQAAAAAAAAIAAAAAAAAAA5UcmFuc2ZlckZhaWxlZAAAAAAACQAAAAAAAAATSW52YWxpZFB1YmxpY0lucHV0cwAAAAAKAAAAAAAAAA9Qcm9vZlBhcnNlRXJyb3IAAAAACwAAAAAAAAASVmVyaWZpY2F0aW9uRmFpbGVkAAAAAAAMAAAAAAAAAA1OdWxsaWZpZXJVc2VkAAAAAAAADQAAAAAAAAATUHVibGljSW5wdXRNaXNtYXRjaAAAAAAOAAAAAAAAAApOb3RFeHBpcmVkAAAAAAAP",
+      new ContractSpec([ "AAAABAAAAAAAAAAAAAAABUVycm9yAAAAAAAAEAAAAAAAAAASQWxyZWFkeUluaXRpYWxpemVkAAAAAAABAAAAAAAAAAxVbmF1dGhvcml6ZWQAAAACAAAAAAAAAAtSb290RXhwaXJlZAAAAAADAAAAAAAAABFSb290Tm90UmVnaXN0ZXJlZAAAAAAAAAQAAAAAAAAADkludmFsaWRJbnZvaWNlAAAAAAAFAAAAAAAAAA9JbnZvaWNlTm90Rm91bmQAAAAABgAAAAAAAAAQSW52b2ljZU5vdEZ1bmRlZAAAAAcAAAAAAAAADUludm9pY2VDbG9zZWQAAAAAAAAIAAAAAAAAAA5UcmFuc2ZlckZhaWxlZAAAAAAACQAAAAAAAAATSW52YWxpZFB1YmxpY0lucHV0cwAAAAAKAAAAAAAAAA9Qcm9vZlBhcnNlRXJyb3IAAAAACwAAAAAAAAASVmVyaWZpY2F0aW9uRmFpbGVkAAAAAAAMAAAAAAAAAA1OdWxsaWZpZXJVc2VkAAAAAAAADQAAAAAAAAATUHVibGljSW5wdXRNaXNtYXRjaAAAAAAOAAAAAAAAAApOb3RFeHBpcmVkAAAAAAAPAAAAAAAAABBJc3N1ZXJOb3RUcnVzdGVkAAAAEA==",
         "AAAAAQAAAAAAAAAAAAAAB0ludm9pY2UAAAAADgAAAAAAAAAGYW1vdW50AAAAAAALAAAAAAAAAAljYW5jZWxsZWQAAAAAAAABAAAAAAAAAApleHBpcmVzX2F0AAAAAAAGAAAAAAAAAAZmdW5kZWQAAAAAAAEAAAAAAAAADGludm9pY2VfaGFzaAAAA+4AAAAgAAAAAAAAAA5taW5fcGFpZF9jb3VudAAAAAAABAAAAAAAAAAPbWluX3RvdGFsX2NlbnRzAAAAAAoAAAAAAAAABXBheWVlAAAAAAAAEwAAAAAAAAAKcGF5ZWVfaGFzaAAAAAAD7gAAACAAAAAAAAAABXBheWVyAAAAAAAAEwAAAAAAAAANcGVyaW9kX2J1Y2tldAAAAAAAAAQAAAAAAAAACHJlbGVhc2VkAAAAAQAAAAAAAAAEcm9vdAAAA+4AAAAgAAAAAAAAAAV0b2tlbgAAAAAAABM=",
         "AAAAAQAAAAAAAAAAAAAAClJvb3RSZWNvcmQAAAAAAAIAAAAAAAAACmV4cGlyZXNfYXQAAAAAAAYAAAAAAAAABmlzc3VlcgAAAAAAEw==",
         "AAAAAQAAAAAAAAAAAAAADFBhcnNlZElucHV0cwAAAAcAAAAAAAAADGludm9pY2VfaGFzaAAAA+4AAAAgAAAAAAAAAA5taW5fcGFpZF9jb3VudAAAAAAABAAAAAAAAAAPbWluX3RvdGFsX2NlbnRzAAAAAAoAAAAAAAAACW51bGxpZmllcgAAAAAAA+4AAAAgAAAAAAAAAApwYXllZV9oYXNoAAAAAAPuAAAAIAAAAAAAAAANcGVyaW9kX2J1Y2tldAAAAAAAAAQAAAAAAAAABHJvb3QAAAPuAAAAIA==",
@@ -166,14 +183,18 @@ export class Client extends ContractClient {
         "AAAABQAAAAAAAAAAAAAAE1Jvb3RSZWdpc3RlcmVkRXZlbnQAAAAAAQAAAARyb290AAAAAwAAAAAAAAAEcm9vdAAAA+4AAAAgAAAAAQAAAAAAAAAGaXNzdWVyAAAAAAATAAAAAAAAAAAAAAAKZXhwaXJlc19hdAAAAAAABgAAAAAAAAAC",
         "AAAABQAAAAAAAAAAAAAAFEludm9pY2VSZWxlYXNlZEV2ZW50AAAAAQAAAAhyZWxlYXNlZAAAAAQAAAAAAAAACmludm9pY2VfaWQAAAAAAAYAAAABAAAAAAAAAAVwYXllZQAAAAAAABMAAAAAAAAAAAAAAAZhbW91bnQAAAAAAAsAAAAAAAAAAAAAAAludWxsaWZpZXIAAAAAAAPuAAAAIAAAAAAAAAAC",
         "AAAABQAAAAAAAAAAAAAAFUludm9pY2VDYW5jZWxsZWRFdmVudAAAAAAAAAEAAAAJY2FuY2VsbGVkAAAAAAAAAgAAAAAAAAAKaW52b2ljZV9pZAAAAAAABgAAAAEAAAAAAAAABmFtb3VudAAAAAAACwAAAAAAAAAC",
+        "AAAABQAAAAAAAAAAAAAAFUlzc3VlckF1dGhvcml6ZWRFdmVudAAAAAAAAAEAAAAGaXNzdWVyAAAAAAACAAAAAAAAAAZpc3N1ZXIAAAAAABMAAAABAAAAAAAAAAd0cnVzdGVkAAAAAAEAAAAAAAAAAg==",
         "AAAAAAAAAAAAAAAIZ2V0X3Jvb3QAAAABAAAAAAAAAARyb290AAAD7gAAACAAAAABAAAD6AAAB9AAAAAKUm9vdFJlY29yZAAA",
         "AAAAAAAAAAAAAAAIdmVyaWZpZXIAAAAAAAAAAQAAABM=",
         "AAAAAAAAAAAAAAALZ2V0X2ludm9pY2UAAAAAAQAAAAAAAAAKaW52b2ljZV9pZAAAAAAABgAAAAEAAAPoAAAH0AAAAAdJbnZvaWNlAA==",
         "AAAAAAAAAAAAAAAMZnVuZF9pbnZvaWNlAAAAAQAAAAAAAAAKaW52b2ljZV9pZAAAAAAABgAAAAEAAAPpAAAAAgAAAAM=",
         "AAAAAAAAAAAAAAANX19jb25zdHJ1Y3RvcgAAAAAAAAIAAAAAAAAABWFkbWluAAAAAAAAEwAAAAAAAAAIdmVyaWZpZXIAAAATAAAAAQAAA+kAAAACAAAAAw==",
         "AAAAAAAAAAAAAAANcmVnaXN0ZXJfcm9vdAAAAAAAAAMAAAAAAAAABHJvb3QAAAPuAAAAIAAAAAAAAAAGaXNzdWVyAAAAAAATAAAAAAAAAApleHBpcmVzX2F0AAAAAAAGAAAAAQAAA+kAAAACAAAAAw==",
+        "AAAAAAAAAAAAAAANcmV2b2tlX2lzc3VlcgAAAAAAAAEAAAAAAAAABmlzc3VlcgAAAAAAEwAAAAEAAAPpAAAAAgAAAAM=",
         "AAAAAAAAAAAAAAAOY2FuY2VsX2V4cGlyZWQAAAAAAAEAAAAAAAAACmludm9pY2VfaWQAAAAAAAYAAAABAAAD6QAAAAIAAAAD",
         "AAAAAAAAAAAAAAAOY3JlYXRlX2ludm9pY2UAAAAAAAsAAAAAAAAABXBheWVyAAAAAAAAEwAAAAAAAAAFcGF5ZWUAAAAAAAATAAAAAAAAAAV0b2tlbgAAAAAAABMAAAAAAAAABmFtb3VudAAAAAAACwAAAAAAAAAEcm9vdAAAA+4AAAAgAAAAAAAAAApwYXllZV9oYXNoAAAAAAPuAAAAIAAAAAAAAAAMaW52b2ljZV9oYXNoAAAD7gAAACAAAAAAAAAAD21pbl90b3RhbF9jZW50cwAAAAAKAAAAAAAAAA5taW5fcGFpZF9jb3VudAAAAAAABAAAAAAAAAANcGVyaW9kX2J1Y2tldAAAAAAAAAQAAAAAAAAACmV4cGlyZXNfYXQAAAAAAAYAAAABAAAD6QAAAAYAAAAD",
+        "AAAAAAAAAAAAAAAQYXV0aG9yaXplX2lzc3VlcgAAAAEAAAAAAAAABmlzc3VlcgAAAAAAEwAAAAEAAAPpAAAAAgAAAAM=",
+        "AAAAAAAAAAAAAAARaXNfaXNzdWVyX3RydXN0ZWQAAAAAAAABAAAAAAAAAAZpc3N1ZXIAAAAAABMAAAABAAAAAQ==",
         "AAAAAAAAAAAAAAARaXNfbnVsbGlmaWVyX3VzZWQAAAAAAAABAAAAAAAAAAludWxsaWZpZXIAAAAAAAPuAAAAIAAAAAEAAAAB",
         "AAAAAAAAAAAAAAASdmVyaWZ5X2FuZF9yZWxlYXNlAAAAAAADAAAAAAAAAAppbnZvaWNlX2lkAAAAAAAGAAAAAAAAAA1wdWJsaWNfaW5wdXRzAAAAAAAADgAAAAAAAAALcHJvb2ZfYnl0ZXMAAAAADgAAAAEAAAPpAAAAAgAAAAM=" ]),
       options
@@ -185,8 +206,11 @@ export class Client extends ContractClient {
         get_invoice: this.txFromJSON<Option<Invoice>>,
         fund_invoice: this.txFromJSON<Result<void>>,
         register_root: this.txFromJSON<Result<void>>,
+        revoke_issuer: this.txFromJSON<Result<void>>,
         cancel_expired: this.txFromJSON<Result<void>>,
         create_invoice: this.txFromJSON<Result<u64>>,
+        authorize_issuer: this.txFromJSON<Result<void>>,
+        is_issuer_trusted: this.txFromJSON<boolean>,
         is_nullifier_used: this.txFromJSON<boolean>,
         verify_and_release: this.txFromJSON<Result<void>>
   }

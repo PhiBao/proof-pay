@@ -3,10 +3,10 @@ import { networkConfig } from "@/lib/demo-data";
 export const proofpayDeployment = {
   contractId:
     process.env.NEXT_PUBLIC_PROOFPAY_CONTRACT_ID ??
-    "CDMJGLNX4DL4ZUUMR6LOWKL6SAOF5DHN33ILW5Z46TNSRWR2GXPRUEDD",
+    "CAVFYHBACVPGVY6COJ62UU7XHPJJZXQ2FMMRRGHBODRV3RGXJYPGIDKA",
   verifierId:
     process.env.NEXT_PUBLIC_PROOFPAY_VERIFIER_ID ??
-    "CCPWNL7ASCMTOCKFPLKSQYMFSZEIZ7PI3MRNPU4OAZGSG2EOXSWD6LXW",
+    "CC7TO4Y3ZHTFBPSXZXC6Y2WN4PJ5MGXTI5YOENRDFATSLOSLWARI2JCO",
   root:
     process.env.NEXT_PUBLIC_PROOFPAY_ROOT ??
     "0x143e346ea19e713db9f6a128bc6852ce185211dc659193bbcad66e2956b6f095",
@@ -20,16 +20,18 @@ export const proofpayDeployment = {
 
 export const liveProof = {
   verificationTx:
-    "f6825fa68181c29db87f271e851ad1b75ac99c617977cc7b38c1f5c21e6d55cc",
+    "175a524cd9c62b7808a38e5f15c80f1f99dc3335be20f9be13d0e068ef2b939d",
+  issuerAuthorizationTx:
+    "e4326f00ad33b5f12510fad10750f1a5adb728fd8211ba7669ce23f52ae69663",
   rootRegistrationTx:
-    "d4882534d9be19ff84f203a83dba5be0c19dba208ea169d2e7e2c54a83551359",
+    "0bf8421cf0bd06db8362fc7b80d52a397f3dfd2bc92403b5a996025d8d9bda93",
   escrowInvoiceId: "1",
   escrowCreateTx:
-    "668adf31422e3177af617fd88b524c579d5910cc9879e15a8b77d61dd0845b1c",
+    "c9325ccdfda0863b4bb0f51631fe6dd230bfe8df465b917c9b87f7cb37f5d6e0",
   escrowFundTx:
-    "93987cc2c14b0b732713d9614209593e32647e2c11ad1879934f0bb03859fc55",
+    "099e45c419d1a768b212f02692a3fab8322f318736499e983dcfc16c564a183f",
   escrowReleaseTx:
-    "43ec2d74b41920d2e07e9b7e4510b05a8fec0aa66dcd273627a4b2057e509ac6"
+    "abe1a23e2f89f24c02ab6e2d0c1424772c243a77818265d99af21a21b53b8fef"
 } as const;
 
 export function stellarExpertContractUrl(contractId: string): string {

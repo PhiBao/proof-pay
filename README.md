@@ -1,70 +1,68 @@
 # ProofPay
 
-ProofPay is a private work-proof checkout for Stellar invoice escrow.
+ProofPay is a private contractor trust checkout for Stellar invoice escrow.
 
-Freelancers and small studios often need to prove they have real paid-work history before a client funds a milestone. Today that usually means exposing screenshots, revenue totals, past client names, or references. ProofPay changes that flow: the client can fund escrow after seeing a cryptographic proof that the freelancer meets a reputation threshold, without seeing the underlying work history.
+A client can create and fund a milestone invoice, share a claim link, and let the contractor release payment only after generating a zero-knowledge proof that they meet the agreed paid-work policy. The contractor proves enough to earn trust without revealing exact revenue, prior client names, invoice rows, or credential secrets.
 
-## What The App Does
+## Why ProofPay Exists
 
-ProofPay has three user-facing parts:
+First-time freelance payments often get stuck on trust.
 
-- **Client invoice draft:** the client enters the client name, project, and XLM amount for a testnet escrow invoice.
-- **Private proof check:** the freelancer proves an issuer-attested paid-work credential clears the client threshold.
-- **Stellar escrow release:** the Soroban contract releases escrow only after the proof verifies and the public proof inputs match the invoice policy.
+Clients want evidence that a contractor has delivered paid work before funding a milestone. Contractors do not want to send screenshots, expose revenue totals, or reveal past customer relationships. Existing marketplace reputation is not portable, and direct-hire work usually falls back to manual references.
 
-The visible invoice starts as a blank client draft. The current MVP keeps the verified freelancer profile and proof policy fixed to the demo credential so the ZK path stays real and reproducible.
+ProofPay turns that trust check into an invoice-bound proof:
 
-## Why This Matters
+- the payer locks funds in Stellar escrow
+- the claim link carries the exact invoice policy
+- the contractor proves privately that an issuer-attested credential clears the policy
+- the Soroban contract releases escrow only if the proof and invoice match
 
-For higher-trust freelance work, the first payment is often blocked by reputation checks. Buyers want confidence before funding. Freelancers want privacy around revenue, prior clients, and deal volume. ProofPay makes the reputation check binary and reusable:
+The product thesis is private portable reputation for paid work, not a generic invoice app.
 
-- client learns the freelancer meets the threshold
-- freelancer keeps raw business history private
-- escrow cannot release unless the proof is accepted on Stellar
+## Product Flow
 
-This is not a token product and not a compliance product. The product is private reputation for paid work.
+ProofPay has two sides.
 
-## Current Demo Status
+**Payer side:** The client reviews or edits the invoice terms, connects Freighter on Stellar testnet, commits the terms, creates the escrow invoice, funds it, and receives a claim link.
 
-What is real:
+**Contractor side:** The contractor opens the claim link, ProofPay validates the funded invoice on-chain, generates a fresh Noir/Barretenberg proof for that invoice commitment, and submits `verify_and_release`.
 
-- Noir circuit proves threshold satisfaction and Merkle membership.
-- Barretenberg creates an UltraHonk proof.
-- A Stellar testnet verifier contract accepts the proof.
-- ProofPay escrow contract stores issuer roots, creates invoices, funds escrow, checks nullifiers, and releases payment after proof verification.
-- The browser uses Freighter for wallet connection and contract signing.
+The payer does not generate the proof. The contractor does. The release proof is bound to the funded invoice through `invoice_hash`, so a proof generated for one invoice cannot release a different invoice.
 
-What is fixture-backed:
+## What Is Real Today
 
-- The issuer credential is deterministic demo data, not a live Stripe, Upwork, bank, or accounting integration.
-- The freelancer profile is a demo verified profile.
-- The proof policy is fixed for the MVP: at least `$12,000` paid work and at least `12` paid invoices in period `202606`.
-- The invoice form collects client/project/amount. Custom amount feeds the on-chain escrow amount; the reputation proof still uses the fixed demo proof policy.
+- Next.js product UI with payer workspace and contractor claim page.
+- Freighter wallet connection and Stellar testnet transaction signing.
+- Soroban ProofPay escrow contract with issuer authorization, root registration, invoice creation, funding, cancellation, nullifier storage, and proof-gated release.
+- Soroban verifier contract using `rs-soroban-ultrahonk`.
+- Noir circuit proving paid-work threshold satisfaction, Merkle membership, and invoice-bound nullifier correctness.
+- Barretenberg proof generation from the claim page API.
+- Runtime proof generation for the exact claim-link invoice hash.
+- Public-input artifact validation before the API returns a proof, preventing stale proof bytes from being submitted.
 
-## User Flow
+## What Is Fixture-Backed
 
-1. Client opens ProofPay and edits the invoice draft.
-2. Client checks the freelancer's private work proof.
-3. ProofPay loads the generated proof and public inputs.
-4. Client connects Freighter on Stellar testnet.
-5. Client creates the escrow invoice.
-6. Client funds escrow.
-7. ProofPay submits `verify_and_release`.
-8. Contract verifies the proof, marks the nullifier used, and releases XLM to the freelancer.
+- The issuer credential is deterministic demo data.
+- There is no live Stripe, Upwork, bank, payroll, or accounting connector yet.
+- The proof period is fixed to `202606`.
+- The demo verified contractor profile is static.
+- Local proof generation requires `cargo`, `nargo`, and `bb` on the machine running the app.
+
+These are MVP boundaries, not hidden claims. The real product next step is issuer integration.
 
 ## What The ZK Proof Proves
 
 The Noir circuit proves:
 
-- the private aggregate paid-work total is at least the public minimum
-- the private paid-invoice count is at least the public minimum
+- the private aggregate paid-work total is at least the public invoice minimum
+- the private paid-invoice count is at least the public invoice minimum
 - the credential leaf belongs to the public issuer Merkle root
 - the nullifier equals `Poseidon2(credential_secret, invoice_hash)`
 
 The proof does not reveal:
 
 - exact historical revenue
-- past client names
+- prior client names
 - raw invoice rows
 - credential secret
 - Merkle path
@@ -79,56 +77,47 @@ Public proof inputs:
 - `period_bucket`
 - `nullifier`
 
-## What Stellar Does
-
-The Stellar side has two contracts:
-
-- **Verifier contract:** stores the verification key and verifies UltraHonk proofs.
-- **ProofPay contract:** manages issuer roots, invoices, escrow funding, nullifier use, and proof-gated release.
+## What Stellar Enforces
 
 `verify_and_release(invoice_id, public_inputs, proof_bytes)` checks:
 
-- invoice exists and is funded
+- invoice exists
+- invoice is funded
+- invoice is not cancelled or already released
+- public inputs match the stored invoice policy
 - issuer root is registered and unexpired
-- public proof inputs match the invoice policy
 - nullifier has not been used
-- external verifier accepts the proof
+- external verifier accepts the UltraHonk proof
 
-Only then does the contract transfer escrow to the payee.
+Only then does the contract transfer escrow to the payee and mark the invoice released.
 
 ## Current Testnet Deployment
 
 - Network: Stellar testnet
 - RPC: `https://soroban-testnet.stellar.org`
-- Verifier: `CCPWNL7ASCMTOCKFPLKSQYMFSZEIZ7PI3MRNPU4OAZGSG2EOXSWD6LXW`
-- ProofPay: `CDMJGLNX4DL4ZUUMR6LOWKL6SAOF5DHN33ILW5Z46TNSRWR2GXPRUEDD`
+- ProofPay: `CAVFYHBACVPGVY6COJ62UU7XHPJJZXQ2FMMRRGHBODRV3RGXJYPGIDKA`
+- Verifier: `CC7TO4Y3ZHTFBPSXZXC6Y2WN4PJ5MGXTI5YOENRDFATSLOSLWARI2JCO`
 - Registered root: `0x143e346ea19e713db9f6a128bc6852ce185211dc659193bbcad66e2956b6f095`
-- Latest proof verification: https://stellar.expert/explorer/testnet/tx/f6825fa68181c29db87f271e851ad1b75ac99c617977cc7b38c1f5c21e6d55cc
-- Recorded full escrow release trace: https://stellar.expert/explorer/testnet/tx/43ec2d74b41920d2e07e9b7e4510b05a8fec0aa66dcd273627a4b2057e509ac6
 
-The recorded escrow trace shows a previous deployment successfully creating, funding, verifying, and releasing an invoice. The current app deployment is fresh so the browser flow can release once with the demo nullifier.
+Evidence:
 
-## Stack
+- Issuer authorization: https://stellar.expert/explorer/testnet/tx/e4326f00ad33b5f12510fad10750f1a5adb728fd8211ba7669ce23f52ae69663
+- Root registration: https://stellar.expert/explorer/testnet/tx/0bf8421cf0bd06db8362fc7b80d52a397f3dfd2bc92403b5a996025d8d9bda93
+- Proof verification: https://stellar.expert/explorer/testnet/tx/175a524cd9c62b7808a38e5f15c80f1f99dc3335be20f9be13d0e068ef2b939d
+- Recorded escrow release: https://stellar.expert/explorer/testnet/tx/abe1a23e2f89f24c02ab6e2d0c1424772c243a77818265d99af21a21b53b8fef
 
-- Next.js, React, TypeScript, Tailwind CSS
-- Freighter wallet API
-- Rust Soroban contracts
-- Generated TypeScript bindings from Stellar CLI
-- Noir `1.0.0-beta.9`
-- Barretenberg `0.87.0`
-- Stellar CLI `26.1.0`
-- `rs-soroban-ultrahonk`
+Additional local verification on the current app generated proof bytes for funded invoice `4` and simulated `verify_and_release` successfully. The simulation emitted the expected token transfer and `InvoiceReleasedEvent`; it was not submitted, so invoice `4` remains usable for browser release.
 
 ## Repository Layout
 
-- `src/app` - checkout UI and demo APIs
-- `src/lib` - wallet adapter, app config, proof artifact loading, contract client helpers
-- `src/contracts/proofpay` - generated TypeScript bindings
-- `circuits/proofpay` - Noir credential-threshold circuit
-- `contracts/verifier` - UltraHonk verifier contract
-- `contracts/proofpay` - escrow, root registry, nullifier registry, lifecycle events
-- `scripts` - proof build, deployment, verification, and escrow exercise scripts
-- `docs/LIVE_PROOF.md` - deployed contract and transaction evidence
+- `src/app` - payer UI, claim UI, API routes, app icon
+- `src/lib` - wallet helpers, app config, claim-link encoding, invoice canonicalization, proof artifact loading
+- `src/contracts/proofpay` - generated TypeScript bindings for the ProofPay contract
+- `circuits/proofpay` - Noir paid-work proof circuit
+- `contracts/proofpay` - Soroban escrow and proof-gated release contract
+- `contracts/verifier` - Soroban UltraHonk verifier contract
+- `scripts` - deployment, verification, and escrow exercise scripts
+- `docs` - live proof notes
 
 ## Local Setup
 
@@ -138,7 +127,7 @@ Install dependencies:
 pnpm install
 ```
 
-Start the app:
+Start the HTTPS dev server:
 
 ```bash
 pnpm dev
@@ -150,9 +139,25 @@ Open:
 https://localhost:3000
 ```
 
-The dev script creates a local self-signed certificate and starts Next.js over HTTPS because wallet extensions are more reliable on secure origins.
+The dev server uses a local self-signed certificate because wallet extensions behave more reliably on secure origins.
 
-## Proof And Contract Commands
+## Browser Demo
+
+1. Open `/`.
+2. Review or edit the payer invoice fields.
+3. Connect Freighter on Stellar testnet.
+4. Commit invoice terms.
+5. Create the escrow invoice.
+6. Fund the escrow.
+7. Copy or open the claim link.
+8. On `/claim/[invoiceId]`, generate the private proof.
+9. Connect Freighter as the contractor.
+10. Release escrow.
+11. Open the claim audit trail and Stellar explorer links.
+
+If release fails with a public-input mismatch, reload the claim page and generate a fresh proof. Old proof artifacts are invoice-specific and should not be reused.
+
+## Commands
 
 Build the valid proof artifacts:
 
@@ -160,7 +165,7 @@ Build the valid proof artifacts:
 just build-circuit
 ```
 
-Run the below-threshold failure case:
+Run the below-threshold negative case:
 
 ```bash
 just circuit-negative
@@ -172,31 +177,29 @@ Build Soroban WASM:
 just build-contracts
 ```
 
-Deploy fresh testnet verifier and ProofPay contracts:
-
-```bash
-just deploy-testnet
-```
-
 Verify the current proof against the deployed verifier:
 
 ```bash
 just verify-testnet
 ```
 
-Exercise a full testnet escrow path on a fresh deployment:
+Deploy fresh testnet contracts:
+
+```bash
+just deploy-testnet
+```
+
+Exercise a full testnet escrow path:
 
 ```bash
 just exercise-testnet-escrow
 ```
 
-The demo proof nullifier is single-use per deployment. If `verify_and_release` returns `NullifierUsed`, deploy fresh contracts and run the flow again.
-
 ## Quality Checks
 
 ```bash
-pnpm lint
 pnpm typecheck
+pnpm lint
 pnpm build
 cargo test --workspace
 stellar contract build
@@ -205,21 +208,20 @@ just circuit-negative
 just verify-testnet
 ```
 
-## Security Model
+## Security Notes
 
-- The payer must authorize invoice creation and funding.
-- Release is permissionless, but proof verification, invoice public-input matching, registered root checks, and nullifier checks gate the transfer.
-- Nullifier replay is rejected by persistent contract storage.
-- Expired invoices can be cancelled by the payer.
-- Demo credentials are fixtures and should not be treated as real-world attestations.
+- Release is permissionless, but proof verification and invoice public-input matching gate payment.
+- Nullifiers are stored on-chain and cannot be reused.
+- Issuer roots must be registered by an authorized issuer.
+- Root expiration is checked during release.
+- Cancelled, unfunded, and already released invoices cannot be released.
+- Demo credentials are not real attestations.
 
-## Product Roadmap
+## Roadmap
 
-The next product steps are:
-
-- replace deterministic demo credentials with signed issuer credentials from real payment platforms
-- generate proofs per invoice in a local/browser prover worker
-- derive `invoice_hash` from the user-created invoice payload
-- support multiple verified freelancer profiles
-- add hosted deployment with a smoother wallet onboarding path
-- add a lightweight issuer console for credential issuance and revocation
+- Replace fixture credentials with signed issuer credentials from a real payment or freelancer platform.
+- Move proof generation into a better worker/server job experience with progress states.
+- Support multiple contractor profiles and issuer roots.
+- Add hosted deployment and smoother wallet onboarding.
+- Add issuer credential revocation and refresh flows.
+- Expand escrow tokens beyond testnet XLM for stablecoin-oriented workflows.

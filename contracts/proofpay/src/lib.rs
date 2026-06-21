@@ -57,6 +57,13 @@ pub struct RootRegisteredEvent<'a> {
     pub expires_at: &'a u64,
 }
 
+#[contractevent(topics = ["issuer"], data_format = "map")]
+pub struct IssuerAuthorizedEvent<'a> {
+    #[topic]
+    pub issuer: &'a Address,
+    pub trusted: &'a bool,
+}
+
 #[contractevent(topics = ["invoice"], data_format = "map")]
 pub struct InvoiceCreatedEvent<'a> {
     #[topic]
@@ -94,6 +101,7 @@ pub struct InvoiceCancelledEvent<'a> {
 enum DataKey {
     Admin,
     Verifier,
+    TrustedIssuer(Address),
     Root(BytesN<32>),
     Invoice(u64),
     NextInvoice,
@@ -119,6 +127,7 @@ pub enum Error {
     NullifierUsed = 13,
     PublicInputMismatch = 14,
     NotExpired = 15,
+    IssuerNotTrusted = 16,
 }
 
 fn now(env: &Env) -> u64 {
@@ -131,6 +140,13 @@ fn key_admin() -> DataKey {
 
 fn key_verifier() -> DataKey {
     DataKey::Verifier
+}
+
+fn read_admin(env: &Env) -> Address {
+    env.storage()
+        .instance()
+        .get(&key_admin())
+        .expect("admin must be initialized")
 }
 
 fn read_invoice(env: &Env, invoice_id: u64) -> Result<Invoice, Error> {
@@ -236,6 +252,41 @@ impl ProofPayContract {
             .expect("verifier must be initialized")
     }
 
+    pub fn authorize_issuer(env: Env, issuer: Address) -> Result<(), Error> {
+        let admin = read_admin(&env);
+        admin.require_auth();
+        env.storage()
+            .persistent()
+            .set(&DataKey::TrustedIssuer(issuer.clone()), &true);
+        IssuerAuthorizedEvent {
+            issuer: &issuer,
+            trusted: &true,
+        }
+        .publish(&env);
+        Ok(())
+    }
+
+    pub fn revoke_issuer(env: Env, issuer: Address) -> Result<(), Error> {
+        let admin = read_admin(&env);
+        admin.require_auth();
+        env.storage()
+            .persistent()
+            .set(&DataKey::TrustedIssuer(issuer.clone()), &false);
+        IssuerAuthorizedEvent {
+            issuer: &issuer,
+            trusted: &false,
+        }
+        .publish(&env);
+        Ok(())
+    }
+
+    pub fn is_issuer_trusted(env: Env, issuer: Address) -> bool {
+        env.storage()
+            .persistent()
+            .get(&DataKey::TrustedIssuer(issuer))
+            .unwrap_or(false)
+    }
+
     pub fn register_root(
         env: Env,
         root: BytesN<32>,
@@ -243,6 +294,9 @@ impl ProofPayContract {
         expires_at: u64,
     ) -> Result<(), Error> {
         issuer.require_auth();
+        if !Self::is_issuer_trusted(env.clone(), issuer.clone()) {
+            return Err(Error::IssuerNotTrusted);
+        }
         if expires_at <= now(&env) {
             return Err(Error::RootExpired);
         }
@@ -596,6 +650,7 @@ mod test {
 
     fn create_funded_invoice(f: &Fixture) -> u64 {
         let client = f.client();
+        client.authorize_issuer(&f.issuer);
         client.register_root(&f.root, &f.issuer, &1_000);
         let invoice_id = client.create_invoice(
             &f.payer,
@@ -618,6 +673,7 @@ mod test {
     fn root_registration_and_invoice_creation_work() {
         let f = fixture();
         let client = f.client();
+        client.authorize_issuer(&f.issuer);
         client.register_root(&f.root, &f.issuer, &1_000);
         let record = client.get_root(&f.root).unwrap();
         assert_eq!(record.issuer, f.issuer);
@@ -638,6 +694,27 @@ mod test {
         let invoice = client.get_invoice(&invoice_id).unwrap();
         assert_eq!(invoice.amount, 250);
         assert!(!invoice.funded);
+    }
+
+    #[test]
+    fn untrusted_issuer_cannot_register_root() {
+        let f = fixture();
+        let client = f.client();
+        assert!(!client.is_issuer_trusted(&f.issuer));
+
+        let result = client.try_register_root(&f.root, &f.issuer, &1_000);
+        assert!(result.is_err() || result.unwrap().is_err());
+    }
+
+    #[test]
+    fn admin_can_revoke_issuer() {
+        let f = fixture();
+        let client = f.client();
+        client.authorize_issuer(&f.issuer);
+        assert!(client.is_issuer_trusted(&f.issuer));
+
+        client.revoke_issuer(&f.issuer);
+        assert!(!client.is_issuer_trusted(&f.issuer));
     }
 
     #[test]

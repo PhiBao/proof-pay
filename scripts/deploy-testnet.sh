@@ -44,6 +44,15 @@ stellar contract invoke \
   --network "$NETWORK" \
   --send yes \
   -- \
+  authorize_issuer \
+  --issuer "$ADMIN_ADDRESS"
+
+stellar contract invoke \
+  --id "$PROOFPAY_ID" \
+  --source "$SOURCE_ACCOUNT" \
+  --network "$NETWORK" \
+  --send yes \
+  -- \
   register_root \
   --root "$ROOT_BYTES" \
   --issuer "$ADMIN_ADDRESS" \

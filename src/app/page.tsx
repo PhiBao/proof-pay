@@ -2,54 +2,44 @@
 
 import {
   ArrowRight,
-  BadgeCheck,
   Banknote,
   CheckCircle2,
   CircleAlert,
+  Copy,
   ExternalLink,
   FileCheck2,
-  Fingerprint,
+  Link2,
   Loader2,
   LockKeyhole,
   ShieldCheck,
   Wallet
 } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
+import { proofpayDeployment } from "@/lib/app-config";
+import { demoInvoice, networkConfig, shortHex } from "@/lib/demo-data";
 import {
-  liveProof,
-  proofpayDeployment,
-  stellarExpertContractUrl,
-  stellarExpertTxUrl
-} from "@/lib/app-config";
-import {
-  demoCredentials,
-  demoInvoice,
-  networkConfig,
-  proofPublicInputOrder,
-  shortHex,
-  type DemoCredential,
-  type DemoInvoice
-} from "@/lib/demo-data";
+  encodeClaimPayload,
+  type ClaimLinkPayload
+} from "@/lib/claim-link";
 import {
   connectFreighterWallet,
   freighterSigner,
   shortAddress,
   type WalletState
 } from "@/lib/freighter-wallet";
+import type { CanonicalInvoice } from "@/lib/invoice-proof";
 import {
-  base64ToBuffer,
   fieldHexToBuffer,
   makeProofPayClient,
   xlmToStroops
 } from "@/lib/proofpay-client";
 
-type BusyAction = "proof" | "wallet" | "create" | "fund" | "release" | "reject";
+type BusyAction = "wallet" | "commit" | "create" | "fund" | "copy";
 
 type InvoiceDraft = {
   id: string;
   client: string;
   project: string;
-  payee: string;
   payeeAddress: string;
   amountXlm: string;
   minTotalCents: number;
@@ -57,124 +47,88 @@ type InvoiceDraft = {
   periodBucket: number;
 };
 
-type ProofPayload = {
-  proofStatus: "ready";
-  credential: DemoCredential;
-  invoice: DemoInvoice;
-  eligibility: {
-    qualified: boolean;
-    totalGapCents: number;
-    countGap: number;
+type CommitmentPayload = {
+  status: "ready";
+  credential: {
+    freelancer: string;
+    handle: string;
+    periodBucket: number;
   };
-  publicInputOrder: readonly string[];
-  publicInputs: Record<string, string | undefined>;
-  artifacts: {
-    proofBytesBase64: string;
-    publicInputsBase64: string;
-    proofByteLength: number;
-    publicInputByteLength: number;
+  invoice: CanonicalInvoice;
+  publicInputs: {
+    root: string;
+    payee_hash: string;
+    invoice_hash: string;
+    min_total_cents: string;
+    min_paid_count: string;
+    period_bucket: string;
   };
   contracts: typeof proofpayDeployment;
-  liveProof: typeof liveProof;
 };
 
 type ChainState = {
-  status: "local" | "created" | "funded" | "released";
+  status: "draft" | "committed" | "created" | "funded";
   invoiceId?: string;
   createTx?: string;
   fundTx?: string;
-  releaseTx?: string;
-};
-
-type RejectCase = {
-  status: "idle" | "blocked" | "error";
-  message?: string;
 };
 
 const initialWallet: WalletState = {
   status: "idle",
-  message: "Connect Freighter to create and fund this escrow."
+  message: "Connect Freighter to create and fund escrow."
 };
 
-const initialChain: ChainState = {
-  status: "local"
-};
-
-const initialInvoiceDraft: InvoiceDraft = {
+const initialDraft: InvoiceDraft = {
   id: demoInvoice.id,
-  client: "",
-  project: "",
-  payee: demoInvoice.payee,
+  client: "Aster Labs",
+  project: "Landing page milestone",
   payeeAddress: demoInvoice.payeeAddress,
-  amountXlm: "",
+  amountXlm: demoInvoice.amountXlm,
   minTotalCents: demoInvoice.minTotalCents,
   minPaidCount: demoInvoice.minPaidCount,
   periodBucket: demoInvoice.periodBucket
 };
 
-export default function Home() {
-  const [invoiceDraft, setInvoiceDraft] =
-    useState<InvoiceDraft>(initialInvoiceDraft);
+export default function PayPage() {
+  const [draft, setDraft] = useState<InvoiceDraft>(initialDraft);
   const [wallet, setWallet] = useState<WalletState>(initialWallet);
-  const [proof, setProof] = useState<ProofPayload>();
-  const [chain, setChain] = useState<ChainState>(initialChain);
+  const [commitment, setCommitment] = useState<CommitmentPayload>();
+  const [chain, setChain] = useState<ChainState>({ status: "draft" });
   const [busy, setBusy] = useState<BusyAction>();
   const [notice, setNotice] = useState(
-    `Enter client, project, and amount details, then check ${demoCredentials.qualified.freelancer}'s private work proof.`
+    "Review the invoice, lock escrow, then share a private claim link with the contractor."
   );
   const [error, setError] = useState<string>();
-  const [rejectCase, setRejectCase] = useState<RejectCase>({ status: "idle" });
 
-  const credential = proof?.credential ?? demoCredentials.qualified;
-  const invoiceLocked = chain.status !== "local";
-  const invoiceError = validateInvoiceDraft(invoiceDraft);
+  const invoiceLocked = chain.status !== "draft" && chain.status !== "committed";
+  const invoiceError = validateInvoiceDraft(draft);
   const walletConnected = wallet.status === "connected";
-  const proofReady = proof?.proofStatus === "ready";
-  const proofDelta = useMemo(() => {
-    const totalGap =
-      credential.aggregateTotalCents - invoiceDraft.minTotalCents;
-    const countGap = credential.paidInvoiceCount - invoiceDraft.minPaidCount;
-    return {
-      totalGap,
-      countGap,
-      totalLabel:
-        totalGap >= 0
-          ? `+$${Math.floor(totalGap / 100).toLocaleString()}`
-          : `-$${Math.abs(Math.floor(totalGap / 100)).toLocaleString()}`,
-      countLabel: `${countGap >= 0 ? "+" : ""}${countGap}`
+  const claimUrl = useMemo(() => {
+    if (typeof window === "undefined" || !commitment || !chain.invoiceId) return "";
+    const payload: ClaimLinkPayload = {
+      version: 1,
+      invoiceId: chain.invoiceId,
+      contractId: proofpayDeployment.contractId,
+      client: draft.client.trim(),
+      project: draft.project.trim(),
+      payer: commitment.invoice.payer,
+      payee: commitment.invoice.payee,
+      token: commitment.invoice.token,
+      amountXlm: draft.amountXlm.trim(),
+      amountStroops: commitment.invoice.amountStroops,
+      minTotalCents: commitment.invoice.minTotalCents,
+      minPaidCount: commitment.invoice.minPaidCount,
+      periodBucket: commitment.invoice.periodBucket,
+      expiresAt: commitment.invoice.expiresAt,
+      root: commitment.publicInputs.root,
+      payeeHash: commitment.publicInputs.payee_hash,
+      invoiceHash: commitment.publicInputs.invoice_hash,
+      createTx: chain.createTx,
+      fundTx: chain.fundTx,
+      credential: commitment.credential
     };
-  }, [credential, invoiceDraft.minPaidCount, invoiceDraft.minTotalCents]);
-
-  async function prepareProof() {
-    setBusy("proof");
-    setError(undefined);
-    setNotice("Checking issuer credential without exposing raw work history.");
-
-    try {
-      const response = await fetch("/api/proof/prepare", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ persona: "qualified" })
-      });
-      const payload = (await response.json()) as ProofPayload & {
-        message?: string;
-      };
-
-      if (!response.ok || payload.proofStatus !== "ready") {
-        throw new Error(payload.message ?? "Private proof is not ready.");
-      }
-
-      setProof(payload);
-      setNotice(
-        `${payload.credential.freelancer} meets the client threshold. The exact revenue and client list stay private.`
-      );
-    } catch (caught) {
-      setError(readError(caught));
-      setNotice("Proof check did not complete.");
-    } finally {
-      setBusy(undefined);
-    }
-  }
+    return `${window.location.origin}/claim/${chain.invoiceId}?p=${encodeClaimPayload(payload)}`;
+  }, [chain.createTx, chain.fundTx, chain.invoiceId, commitment, draft]);
 
   async function connectWallet() {
     setBusy("wallet");
@@ -196,18 +150,65 @@ export default function Home() {
     }
   }
 
-  async function createInvoice() {
-    if (!proof || wallet.status !== "connected") return;
-    const validationError = validateInvoiceDraft(invoiceDraft);
+  async function prepareCommitment() {
+    if (wallet.status !== "connected") {
+      setError("Connect Freighter before committing an invoice.");
+      return undefined;
+    }
+    const validationError = validateInvoiceDraft(draft);
     if (validationError) {
       setError(validationError);
-      setNotice("Invoice creation paused.");
-      return;
+      return undefined;
     }
+
+    setBusy("commit");
+    setError(undefined);
+    setNotice("Computing the invoice commitment for escrow creation.");
+
+    try {
+      const response = await fetch("/api/invoice/commitment", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          client: draft.client,
+          project: draft.project,
+          payer: wallet.address,
+          payee: draft.payeeAddress,
+          token: proofpayDeployment.nativeTokenContractId,
+          amountXlm: draft.amountXlm,
+          minTotalCents: draft.minTotalCents,
+          minPaidCount: draft.minPaidCount,
+          periodBucket: draft.periodBucket,
+          expiresAt: proofpayDeployment.rootExpiresAt
+        })
+      });
+      const payload = (await response.json()) as CommitmentPayload & {
+        message?: string;
+      };
+      if (!response.ok || payload.status !== "ready") {
+        throw new Error(payload.message ?? "Invoice commitment failed.");
+      }
+      setCommitment(payload);
+      setChain((current) => ({ ...current, status: "committed" }));
+      setNotice("Invoice commitment ready. Create the escrow invoice next.");
+      return payload;
+    } catch (caught) {
+      setError(readError(caught));
+      setNotice("Invoice commitment failed.");
+      return undefined;
+    } finally {
+      setBusy(undefined);
+    }
+  }
+
+  async function createInvoice() {
+    if (wallet.status !== "connected") return;
+    const activeCommitment = commitment ?? (await prepareCommitment());
+    if (!activeCommitment) return;
 
     setBusy("create");
     setError(undefined);
-    setNotice("Asking Freighter to create the escrow invoice.");
+    setNotice("Asking Freighter to create the proof-gated escrow invoice.");
 
     try {
       const client = makeProofPayClient(
@@ -216,27 +217,26 @@ export default function Home() {
       );
       const tx = await client.create_invoice({
         payer: wallet.address,
-        payee: invoiceDraft.payeeAddress,
+        payee: activeCommitment.invoice.payee,
         token: proofpayDeployment.nativeTokenContractId,
-        amount: xlmToStroops(invoiceDraft.amountXlm),
-        root: fieldHexToBuffer(requiredInput(proof, "root")),
-        payee_hash: fieldHexToBuffer(requiredInput(proof, "payee_hash")),
-        invoice_hash: fieldHexToBuffer(requiredInput(proof, "invoice_hash")),
-        min_total_cents: BigInt(invoiceDraft.minTotalCents),
-        min_paid_count: invoiceDraft.minPaidCount,
-        period_bucket: invoiceDraft.periodBucket,
+        amount: xlmToStroops(draft.amountXlm),
+        root: fieldHexToBuffer(activeCommitment.publicInputs.root),
+        payee_hash: fieldHexToBuffer(activeCommitment.publicInputs.payee_hash),
+        invoice_hash: fieldHexToBuffer(activeCommitment.publicInputs.invoice_hash),
+        min_total_cents: BigInt(draft.minTotalCents),
+        min_paid_count: draft.minPaidCount,
+        period_bucket: draft.periodBucket,
         expires_at: BigInt(proofpayDeployment.rootExpiresAt)
       });
       const sent = await tx.signAndSend();
       const invoiceId = sent.result.unwrap().toString();
 
-      setChain((current) => ({
-        ...current,
+      setChain({
         status: "created",
         invoiceId,
         createTx: sent.sendTransactionResponse?.hash
-      }));
-      setNotice(`Escrow invoice #${invoiceId} created on Stellar testnet.`);
+      });
+      setNotice(`Escrow invoice #${invoiceId} created. Fund it before sharing.`);
     } catch (caught) {
       setError(readError(caught));
       setNotice("Invoice creation failed.");
@@ -249,7 +249,7 @@ export default function Home() {
     if (wallet.status !== "connected" || !chain.invoiceId) return;
     setBusy("fund");
     setError(undefined);
-    setNotice("Asking Freighter to fund the escrow.");
+    setNotice("Asking Freighter to fund escrow.");
 
     try {
       const client = makeProofPayClient(
@@ -267,7 +267,7 @@ export default function Home() {
         status: "funded",
         fundTx: sent.sendTransactionResponse?.hash
       }));
-      setNotice("Escrow funded. Payment is locked until the proof is verified.");
+      setNotice("Escrow funded. Share the claim link with the contractor.");
     } catch (caught) {
       setError(readError(caught));
       setNotice("Escrow funding failed.");
@@ -276,157 +276,76 @@ export default function Home() {
     }
   }
 
-  async function releasePayment() {
-    if (!proof || wallet.status !== "connected" || !chain.invoiceId) return;
-    setBusy("release");
-    setError(undefined);
-    setNotice("Submitting the proof to release payment.");
-
+  async function copyClaimLink() {
+    if (!claimUrl) return;
+    setBusy("copy");
     try {
-      const client = makeProofPayClient(
-        wallet.address,
-        freighterSigner(wallet.address)
-      );
-      const tx = await client.verify_and_release({
-        invoice_id: BigInt(chain.invoiceId),
-        public_inputs: base64ToBuffer(proof.artifacts.publicInputsBase64),
-        proof_bytes: base64ToBuffer(proof.artifacts.proofBytesBase64)
-      });
-      const sent = await tx.signAndSend();
-      sent.result.unwrap();
-
-      setChain((current) => ({
-        ...current,
-        status: "released",
-        releaseTx: sent.sendTransactionResponse?.hash
-      }));
-      setNotice(`Proof verified on Stellar. Payment released to ${credential.freelancer}.`);
+      await navigator.clipboard.writeText(claimUrl);
+      setNotice("Claim link copied.");
     } catch (caught) {
       setError(readError(caught));
-      setNotice("Release failed.");
     } finally {
       setBusy(undefined);
     }
   }
 
-  async function runRejectCase() {
-    setBusy("reject");
-    setRejectCase({ status: "idle" });
-
-    try {
-      const response = await fetch("/api/proof/prepare", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ persona: "unqualified" })
-      });
-      const payload = (await response.json()) as {
-        eligibility?: { reason?: string };
-        message?: string;
-      };
-
-      if (response.status === 422) {
-        setRejectCase({
-          status: "blocked",
-          message:
-            payload.eligibility?.reason ??
-            "The credential was blocked before release."
-        });
-      } else {
-        throw new Error(payload.message ?? "Unexpected reject-case response.");
-      }
-    } catch (caught) {
-      setRejectCase({ status: "error", message: readError(caught) });
-    } finally {
-      setBusy(undefined);
-    }
-  }
-
-  const primaryAction = getPrimaryAction({
+  const primaryAction = getPayerAction({
     busy,
     chainStatus: chain.status,
     connectWallet,
     createInvoice,
     fundInvoice,
     invoiceError,
-    proofReady,
-    prepareProof,
-    releasePayment,
+    prepareCommitment,
     walletConnected,
     walletStatus: wallet.status
   });
 
   return (
     <main className="appShell">
-      <header className="appHeader">
-        <div className="brandLockup" aria-label="ProofPay">
-          <span className="brandMark">
-            <LockKeyhole size={18} />
-          </span>
-          <div>
-            <strong>ProofPay</strong>
-            <span>Private reputation checkout</span>
-          </div>
-        </div>
-        <button
-          className="walletButton"
-          type="button"
-          onClick={connectWallet}
-          disabled={busy === "wallet"}
-        >
-          {busy === "wallet" ? <Loader2 size={17} className="spin" /> : <Wallet size={17} />}
-          <span>
-            {wallet.status === "connected"
-              ? shortAddress(wallet.address)
-              : "Connect wallet"}
-          </span>
-        </button>
-      </header>
+      <AppHeader
+        wallet={wallet}
+        busy={busy === "wallet"}
+        onConnect={connectWallet}
+      />
 
-      <section className="checkoutHero" aria-label="ProofPay checkout">
-        <div className="checkoutPanel">
-          <div className="invoiceHeader">
+      <section className="flowHero" aria-label="ProofPay payer checkout">
+        <div className="flowPanel">
+          <div className="flowHeader">
             <div>
-              <p className="eyebrow">Invoice {invoiceDraft.id}</p>
-              <h1>{invoiceDraft.client || "Client"} pays {credential.freelancer}</h1>
+              <p className="eyebrow">Payer workspace</p>
+              <h1>Lock a proof-gated escrow</h1>
             </div>
-            <StatusBadge tone={chain.status === "released" ? "success" : "neutral"}>
-              {chain.status === "released" ? "Released" : networkConfig.name}
+            <StatusBadge tone={chain.status === "funded" ? "success" : "neutral"}>
+              {chain.status === "funded" ? "Ready to claim" : networkConfig.name}
             </StatusBadge>
           </div>
 
           <InvoiceEditor
-            draft={invoiceDraft}
+            draft={draft}
             error={invoiceError}
             locked={invoiceLocked}
             onChange={(nextDraft) => {
-              setInvoiceDraft(nextDraft);
+              setDraft(nextDraft);
+              setCommitment(undefined);
+              setChain({ status: "draft" });
               if (error) setError(undefined);
+              setNotice("Draft changed. Commit it again before escrow creation.");
             }}
           />
 
-          <div className="amountRow">
-            <span>{invoiceDraft.amountXlm || "0.0000000"}</span>
+          <div className="amountRow compactAmount">
+            <span>{draft.amountXlm || "0.0000000"}</span>
             <strong>XLM</strong>
           </div>
 
-          <div className="partyGrid">
-            <DataPoint label="Client" value={invoiceDraft.client || "Draft client"} />
-            <DataPoint label="Project" value={invoiceDraft.project || "Draft milestone"} />
-            <DataPoint label="Payee" value={`${credential.freelancer} ${credential.handle}`} />
-            <DataPoint
-              label="Minimum paid history"
-              value={`$${(invoiceDraft.minTotalCents / 100).toLocaleString()}`}
-            />
-            <DataPoint
-              label="Minimum paid invoices"
-              value={invoiceDraft.minPaidCount.toString()}
-            />
-          </div>
-
           <StepList
-            proofReady={proofReady}
-            walletConnected={walletConnected}
-            chain={chain}
+            steps={[
+              { label: "Draft", complete: !invoiceError },
+              { label: "Committed", complete: Boolean(commitment) },
+              { label: "Created", complete: ["created", "funded"].includes(chain.status) },
+              { label: "Funded", complete: chain.status === "funded" }
+            ]}
           />
 
           <button
@@ -435,212 +354,124 @@ export default function Home() {
             onClick={primaryAction.action}
             disabled={!primaryAction.action || Boolean(busy)}
           >
-            {primaryAction.busy ? (
-              <Loader2 size={18} className="spin" />
-            ) : (
-              primaryAction.icon
-            )}
+            {primaryAction.busy ? <Loader2 size={18} className="spin" /> : primaryAction.icon}
             <span>{primaryAction.label}</span>
-            {!primaryAction.busy && chain.status !== "released" ? (
-              <ArrowRight size={17} />
-            ) : null}
+            {!primaryAction.busy && chain.status !== "funded" ? <ArrowRight size={17} /> : null}
           </button>
 
-          <div
-            className={`notice ${error ? "noticeError" : "noticeInfo"}`}
-            role="status"
-            aria-live="polite"
-          >
-            {error ? <CircleAlert size={17} /> : <ShieldCheck size={17} />}
-            <span>{error ?? notice}</span>
-          </div>
+          <Notice error={error} message={notice} />
         </div>
 
-        <aside className="proofPanel" aria-label="Private proof summary">
+        <aside className="claimPanel" aria-label="Claim link">
           <div className="proofHeader">
-            <BadgeCheck size={22} />
+            <Link2 size={22} />
             <div>
-              <p className="eyebrow">Private work proof</p>
-              <h2>{proofReady ? "Approved for escrow" : "Waiting for proof"}</h2>
+              <p className="eyebrow">Funded claim link</p>
+              <h2>{chain.status === "funded" ? "Share with contractor" : "Created after funding"}</h2>
             </div>
           </div>
 
-          <div className="proofMeter">
-            <div>
-              <span>Verified paid work</span>
-              <strong>{proofReady ? "Threshold passed" : "Not checked"}</strong>
-            </div>
-            <CheckCircle2 size={24} className={proofReady ? "okIcon" : "mutedIcon"} />
+          <div className="claimPreview">
+            <DataPoint label="Contractor" value={commitment?.credential.freelancer ?? "Verified contractor"} />
+            <DataPoint label="Invoice commitment" value={shortHex(commitment?.publicInputs.invoice_hash)} />
+            <DataPoint label="Escrow invoice" value={chain.invoiceId ? `#${chain.invoiceId}` : "pending"} />
+            <DataPoint label="Fund tx" value={shortHex(chain.fundTx)} />
           </div>
 
-          <div className="metricRows">
-            <DataPoint
-              label="Aggregate requirement"
-              value={`Met ${proofDelta.totalLabel}`}
-            />
-            <DataPoint
-              label="Invoice count requirement"
-              value={`Met ${proofDelta.countLabel}`}
-            />
-            <DataPoint
-              label="Raw revenue disclosed"
-              value="No"
-            />
-            <DataPoint
-              label="Client names disclosed"
-              value="No"
-            />
+          <div className="linkBox">
+            <code>{claimUrl || "Claim link appears after the escrow is funded."}</code>
           </div>
 
-          <div className="linkList">
-            <ProofLink
-              label="Verifier contract"
-              href={stellarExpertContractUrl(proofpayDeployment.verifierId)}
-            />
-            <ProofLink
-              label="Proof verification tx"
-              href={stellarExpertTxUrl(liveProof.verificationTx)}
-            />
-            <ProofLink
-              label="Recorded escrow release"
-              href={stellarExpertTxUrl(liveProof.escrowReleaseTx)}
-            />
+          <div className="buttonRow">
+            <button
+              className="secondaryAction"
+              type="button"
+              onClick={copyClaimLink}
+              disabled={!claimUrl || Boolean(busy)}
+            >
+              {busy === "copy" ? <Loader2 size={16} className="spin" /> : <Copy size={16} />}
+              <span>Copy link</span>
+            </button>
+            <a
+              className={`secondaryLink ${claimUrl ? "" : "disabledLink"}`}
+              href={claimUrl || undefined}
+              target="_blank"
+              rel="noreferrer"
+            >
+              <ExternalLink size={16} />
+              <span>Open claim</span>
+            </a>
           </div>
         </aside>
       </section>
 
       <section className="privacyGrid" aria-label="Payment privacy">
         <InfoPanel
-          icon={<ShieldCheck size={20} />}
-          title="Client sees"
+          icon={<Banknote size={20} />}
+          title="Payer locks"
           items={[
-            `${credential.freelancer} meets the agreed paid-work threshold`,
-            "The proof matches this invoice",
-            "The nullifier has not been used before"
+            "Invoice amount in Stellar escrow",
+            "Minimum paid-work policy",
+            "Claim link for the contractor"
+          ]}
+        />
+        <InfoPanel
+          icon={<ShieldCheck size={20} />}
+          title="Contractor proves"
+          items={[
+            "Credential clears the policy",
+            "Proof matches this invoice",
+            "Revenue and client history stay private"
           ]}
         />
         <InfoPanel
           icon={<LockKeyhole size={20} />}
-          title={`${credential.freelancer} keeps private`}
+          title="Contract enforces"
           items={[
-            "Exact historical revenue",
-            "Past client names",
-            "Full credential and invoice history"
-          ]}
-        />
-        <InfoPanel
-          icon={<Banknote size={20} />}
-          title="Escrow protects"
-          items={[
-            "Funds stay locked until proof verification",
-            "Release cannot run twice",
-            "Expired invoices can be cancelled"
+            "Trusted issuer root",
+            "Funded invoice before release",
+            "Nullifier cannot release twice"
           ]}
         />
       </section>
-
-      <details className="auditTrail">
-        <summary>
-          <span>Proof and contract details</span>
-          <span>Audit trail</span>
-        </summary>
-
-        <div className="auditGrid">
-          <div className="auditSection">
-            <h3>On-chain state</h3>
-            <KeyValue label="ProofPay contract" value={proofpayDeployment.contractId} />
-            <KeyValue label="Verifier" value={proofpayDeployment.verifierId} />
-            <KeyValue label="Registered root" value={proof?.publicInputs.root ?? proofpayDeployment.root} />
-            <KeyValue label="Current client" value={invoiceDraft.client} />
-            <KeyValue label="Current project" value={invoiceDraft.project} />
-            <KeyValue label="Current amount" value={`${invoiceDraft.amountXlm || "0"} XLM`} />
-            <KeyValue label="Recorded escrow invoice" value={liveProof.escrowInvoiceId} />
-            <KeyValue label="Invoice ID" value={chain.invoiceId ?? "Created from wallet"} />
-            <TxValue label="Create tx" value={chain.createTx} />
-            <TxValue label="Fund tx" value={chain.fundTx} />
-            <TxValue label="Release tx" value={chain.releaseTx} />
-            <TxValue label="Recorded release" value={liveProof.escrowReleaseTx} />
-          </div>
-
-          <div className="auditSection">
-            <h3>Public proof inputs</h3>
-            {proofPublicInputOrder.map((item) => (
-              <KeyValue
-                key={item}
-                label={item}
-                value={shortHex(proof?.publicInputs[item])}
-              />
-            ))}
-            <KeyValue
-              label="Proof bytes"
-              value={
-                proof
-                  ? `${proof.artifacts.proofByteLength.toLocaleString()} bytes`
-                  : "Generated locally"
-              }
-            />
-          </div>
-
-          <div className="auditSection">
-            <h3>Negative case</h3>
-            <p>
-              Kai&apos;s demo credential is below the same threshold and should be
-              blocked before payment release.
-            </p>
-            <button
-              className="secondaryAction"
-              type="button"
-              onClick={runRejectCase}
-              disabled={Boolean(busy)}
-            >
-              {busy === "reject" ? <Loader2 size={16} className="spin" /> : <CircleAlert size={16} />}
-              <span>Run reject case</span>
-            </button>
-            {rejectCase.message ? (
-              <div
-                className={`compactNotice ${
-                  rejectCase.status === "blocked" ? "compactSuccess" : "compactError"
-                }`}
-              >
-                {rejectCase.message}
-              </div>
-            ) : null}
-          </div>
-        </div>
-      </details>
     </main>
   );
 }
 
-function StepList({
-  proofReady,
-  walletConnected,
-  chain
+function AppHeader({
+  wallet,
+  busy,
+  onConnect
 }: {
-  proofReady: boolean;
-  walletConnected: boolean;
-  chain: ChainState;
+  wallet: WalletState;
+  busy: boolean;
+  onConnect: () => Promise<void>;
 }) {
-  const steps = [
-    { label: "Private proof", complete: proofReady },
-    { label: "Client wallet", complete: walletConnected },
-    {
-      label: "Escrow invoice",
-      complete: ["created", "funded", "released"].includes(chain.status)
-    },
-    { label: "Funded", complete: ["funded", "released"].includes(chain.status) },
-    { label: "Released", complete: chain.status === "released" }
-  ];
-
   return (
-    <ol className="stepList" aria-label="Checkout progress">
-      {steps.map((step) => (
-        <li className={step.complete ? "complete" : ""} key={step.label}>
-          <span>{step.complete ? <CheckCircle2 size={15} /> : null}</span>
-          <strong>{step.label}</strong>
-        </li>
-      ))}
-    </ol>
+    <header className="appHeader">
+      <div className="brandLockup" aria-label="ProofPay">
+        <span className="brandMark">
+          <LockKeyhole size={18} />
+        </span>
+        <div>
+          <strong>ProofPay</strong>
+          <span>Private contractor trust checkout</span>
+        </div>
+      </div>
+      <button
+        className="walletButton"
+        type="button"
+        onClick={onConnect}
+        disabled={busy}
+      >
+        {busy ? <Loader2 size={17} className="spin" /> : <Wallet size={17} />}
+        <span>
+          {wallet.status === "connected"
+            ? shortAddress(wallet.address)
+            : "Connect wallet"}
+        </span>
+      </button>
+    </header>
   );
 }
 
@@ -660,13 +491,18 @@ function InvoiceEditor({
   }
 
   return (
-    <form className="invoiceForm" onSubmit={(event) => event.preventDefault()}>
+    <form
+      className="invoiceForm"
+      autoComplete="off"
+      onSubmit={(event) => event.preventDefault()}
+    >
       <label className="field">
         <span>Client</span>
         <input
           type="text"
+          name="proofpay-client"
           value={draft.client}
-          placeholder="Acme Studio"
+          placeholder="Aster Labs"
           onChange={(event) => update("client", event.target.value)}
           disabled={locked}
           maxLength={64}
@@ -676,8 +512,9 @@ function InvoiceEditor({
         <span>Project</span>
         <input
           type="text"
+          name="proofpay-project"
           value={draft.project}
-          placeholder="Launch milestone"
+          placeholder="Landing page milestone"
           onChange={(event) => update("project", event.target.value)}
           disabled={locked}
           maxLength={84}
@@ -687,6 +524,7 @@ function InvoiceEditor({
         <span>Amount</span>
         <input
           type="text"
+          name="proofpay-amount"
           inputMode="decimal"
           value={draft.amountXlm}
           placeholder="7.5000000"
@@ -696,35 +534,71 @@ function InvoiceEditor({
         />
       </label>
       <label className="field compactField">
-        <span>Proof policy</span>
+        <span>Min history</span>
         <input
           type="text"
-          value={formatProofPolicy(draft)}
-          disabled
-          readOnly
+          name="proofpay-min-history"
+          inputMode="numeric"
+          value={String(Math.floor(draft.minTotalCents / 100))}
+          onChange={(event) => {
+            const dollars = Number(event.target.value.replace(/[^\d]/g, ""));
+            update("minTotalCents", Number.isFinite(dollars) ? dollars * 100 : 0);
+          }}
+          disabled={locked}
+          maxLength={9}
+        />
+      </label>
+      <label className="field compactField">
+        <span>Min invoices</span>
+        <input
+          type="text"
+          name="proofpay-min-invoices"
+          inputMode="numeric"
+          value={String(draft.minPaidCount)}
+          onChange={(event) => {
+            const count = Number(event.target.value.replace(/[^\d]/g, ""));
+            update("minPaidCount", Number.isFinite(count) ? count : 0);
+          }}
+          disabled={locked}
+          maxLength={4}
         />
       </label>
       <div className={`formHint ${error ? "formError" : ""}`}>
         {error
           ? error
           : locked
-            ? "Invoice locked after escrow creation."
-            : "Draft updates feed the checkout and escrow amount."}
+            ? "Invoice terms are locked after escrow creation."
+            : "The claim link will carry these exact invoice terms."}
       </div>
     </form>
   );
 }
 
-function getPrimaryAction({
+function StepList({
+  steps
+}: {
+  steps: Array<{ label: string; complete: boolean }>;
+}) {
+  return (
+    <ol className="stepList fourSteps" aria-label="Payer progress">
+      {steps.map((step) => (
+        <li className={step.complete ? "complete" : ""} key={step.label}>
+          <span>{step.complete ? <CheckCircle2 size={15} /> : null}</span>
+          <strong>{step.label}</strong>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function getPayerAction({
   busy,
   chainStatus,
   connectWallet,
   createInvoice,
   fundInvoice,
   invoiceError,
-  prepareProof,
-  proofReady,
-  releasePayment,
+  prepareCommitment,
   walletConnected,
   walletStatus
 }: {
@@ -734,31 +608,20 @@ function getPrimaryAction({
   createInvoice: () => Promise<void>;
   fundInvoice: () => Promise<void>;
   invoiceError?: string;
-  prepareProof: () => Promise<void>;
-  proofReady: boolean;
-  releasePayment: () => Promise<void>;
+  prepareCommitment: () => Promise<CommitmentPayload | undefined>;
   walletConnected: boolean;
   walletStatus: WalletState["status"];
 }): {
   label: string;
   icon: ReactNode;
-  action?: () => Promise<void>;
+  action?: () => Promise<unknown>;
   busy: boolean;
 } {
-  if (chainStatus === "local" && invoiceError) {
+  if (invoiceError) {
     return {
       label: "Complete invoice details",
       icon: <FileCheck2 size={18} />,
       busy: false
-    };
-  }
-
-  if (!proofReady) {
-    return {
-      label: "Check private proof",
-      icon: <Fingerprint size={18} />,
-      action: prepareProof,
-      busy: busy === "proof"
     };
   }
 
@@ -771,7 +634,16 @@ function getPrimaryAction({
     };
   }
 
-  if (chainStatus === "local") {
+  if (chainStatus === "draft") {
+    return {
+      label: "Commit invoice terms",
+      icon: <ShieldCheck size={18} />,
+      action: prepareCommitment,
+      busy: busy === "commit"
+    };
+  }
+
+  if (chainStatus === "committed") {
     return {
       label: "Create escrow invoice",
       icon: <FileCheck2 size={18} />,
@@ -789,17 +661,8 @@ function getPrimaryAction({
     };
   }
 
-  if (chainStatus === "funded") {
-    return {
-      label: "Verify proof and release",
-      icon: <ShieldCheck size={18} />,
-      action: releasePayment,
-      busy: busy === "release"
-    };
-  }
-
   return {
-    label: "Payment released",
+    label: "Escrow funded",
     icon: <CheckCircle2 size={18} />,
     busy: false
   };
@@ -851,43 +714,17 @@ function InfoPanel({
   );
 }
 
-function ProofLink({ label, href }: { label: string; href: string }) {
+function Notice({ error, message }: { error?: string; message: string }) {
   return (
-    <a href={href} target="_blank" rel="noreferrer">
-      <span>{label}</span>
-      <ExternalLink size={15} />
-    </a>
-  );
-}
-
-function KeyValue({ label, value }: { label: string; value?: string }) {
-  return (
-    <div className="keyValue">
-      <span>{label}</span>
-      <code>{value ?? "pending"}</code>
+    <div
+      className={`notice ${error ? "noticeError" : "noticeInfo"}`}
+      role="status"
+      aria-live="polite"
+    >
+      {error ? <CircleAlert size={17} /> : <ShieldCheck size={17} />}
+      <span>{error ?? message}</span>
     </div>
   );
-}
-
-function TxValue({ label, value }: { label: string; value?: string }) {
-  return (
-    <div className="keyValue">
-      <span>{label}</span>
-      {value ? (
-        <a href={stellarExpertTxUrl(value)} target="_blank" rel="noreferrer">
-          {shortHex(value)}
-        </a>
-      ) : (
-        <code>pending</code>
-      )}
-    </div>
-  );
-}
-
-function requiredInput(proof: ProofPayload, key: string): string {
-  const value = proof.publicInputs[key];
-  if (!value) throw new Error(`Missing proof public input: ${key}`);
-  return value;
 }
 
 function validateInvoiceDraft(draft: InvoiceDraft): string | undefined {
@@ -896,22 +733,16 @@ function validateInvoiceDraft(draft: InvoiceDraft): string | undefined {
   if (!/^\d+(\.\d{1,7})?$/.test(draft.amountXlm.trim())) {
     return "Enter an XLM amount with up to 7 decimals.";
   }
-
   if (xlmToStroops(draft.amountXlm) <= 0n) {
     return "Invoice amount must be greater than zero.";
   }
-
+  if (!Number.isInteger(draft.minTotalCents) || draft.minTotalCents <= 0) {
+    return "Minimum paid history must be greater than zero.";
+  }
+  if (!Number.isInteger(draft.minPaidCount) || draft.minPaidCount <= 0) {
+    return "Minimum paid invoice count must be greater than zero.";
+  }
   return undefined;
-}
-
-function formatProofPolicy(draft: InvoiceDraft): string {
-  const dollars = draft.minTotalCents / 100;
-  const total =
-    dollars >= 1000 && dollars % 1000 === 0
-      ? `$${dollars / 1000}k+`
-      : `$${dollars.toLocaleString()}+`;
-
-  return `${total} / ${draft.minPaidCount}+`;
 }
 
 function readError(caught: unknown): string {

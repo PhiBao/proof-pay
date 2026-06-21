@@ -10,6 +10,7 @@ out/
 certificates/
 circuits/**/target/
 circuits/proofpay/Prover.toml
+circuits/proofpay/Prover.runtime*.toml
 contracts/**/test_snapshots/
 *.log
 tsconfig.tsbuildinfo

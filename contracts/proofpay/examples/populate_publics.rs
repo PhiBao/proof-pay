@@ -1,10 +1,10 @@
 use num_bigint::BigUint;
 use soroban_poseidon::{poseidon2_hash, Field};
 use soroban_sdk::{crypto::BnScalar, Bytes, Env, Vec as SorobanVec, U256};
-use std::{fs, path::Path};
+use std::{env, fs, path::Path};
 
 const TREE_DEPTH: usize = 4;
-const INVOICE_HASH: u64 = 0x01ce_2026;
+const DEFAULT_INVOICE_HASH: u64 = 0x01ce_2026;
 const MIN_TOTAL_CENTS: u64 = 1_200_000;
 const MIN_PAID_COUNT: u32 = 12;
 const PERIOD_BUCKET: u32 = 202_606;
@@ -37,6 +37,35 @@ fn personas() -> [Persona; 2] {
             salt: 0xc0ffee,
         },
     ]
+}
+
+fn parse_biguint(value: &str) -> BigUint {
+    if let Some(hex) = value.strip_prefix("0x") {
+        BigUint::parse_bytes(hex.as_bytes(), 16).expect("parse hex field")
+    } else {
+        BigUint::parse_bytes(value.as_bytes(), 10).expect("parse decimal field")
+    }
+}
+
+fn env_biguint(name: &str, fallback: BigUint) -> BigUint {
+    env::var(name)
+        .ok()
+        .map(|value| parse_biguint(&value))
+        .unwrap_or(fallback)
+}
+
+fn env_u64(name: &str, fallback: u64) -> u64 {
+    env::var(name)
+        .ok()
+        .map(|value| value.parse::<u64>().expect("parse u64 env"))
+        .unwrap_or(fallback)
+}
+
+fn env_u32(name: &str, fallback: u32) -> u32 {
+    env::var(name)
+        .ok()
+        .map(|value| value.parse::<u32>().expect("parse u32 env"))
+        .unwrap_or(fallback)
 }
 
 fn be32_from_biguint(x: &BigUint) -> [u8; 32] {
@@ -88,12 +117,25 @@ fn list(values: &[BigUint]) -> String {
         .join(", ")
 }
 
-fn write_persona(root: &Path, env: &Env, persona: &Persona) {
-    let invoice_hash = BigUint::from(INVOICE_HASH);
+fn persona_by_name(name: &str) -> Persona {
+    personas()
+        .into_iter()
+        .find(|persona| persona.name == name)
+        .unwrap_or_else(|| panic!("unknown persona: {name}"))
+}
+
+fn prover_content(
+    env: &Env,
+    persona: &Persona,
+    invoice_hash: BigUint,
+    min_total_cents: u64,
+    min_paid_count: u32,
+    period_bucket: u32,
+) -> (String, BigUint) {
     let payee_hash = BigUint::from(persona.payee_hash);
     let aggregate = BigUint::from(persona.aggregate_total_cents);
     let paid_count = BigUint::from(persona.paid_invoice_count);
-    let period = BigUint::from(PERIOD_BUCKET);
+    let period = BigUint::from(period_bucket);
     let secret = BigUint::from(persona.credential_secret);
     let salt = BigUint::from(persona.salt);
     let siblings: Vec<BigUint> = (0..TREE_DEPTH).map(|i| zero_at(env, i)).collect();
@@ -117,9 +159,9 @@ fn write_persona(root: &Path, env: &Env, persona: &Persona) {
 root = \"{root_value}\"\n\
 payee_hash = \"{payee_hash}\"\n\
 invoice_hash = \"{invoice_hash}\"\n\
-min_total_cents = \"{MIN_TOTAL_CENTS}\"\n\
-min_paid_count = \"{MIN_PAID_COUNT}\"\n\
-period_bucket = \"{PERIOD_BUCKET}\"\n\
+min_total_cents = \"{min_total_cents}\"\n\
+min_paid_count = \"{min_paid_count}\"\n\
+period_bucket = \"{period_bucket}\"\n\
 nullifier = \"{nullifier}\"\n\
 aggregate_total_cents = \"{}\"\n\
 paid_invoice_count = \"{}\"\n\
@@ -135,6 +177,18 @@ path_bits = [{}]\n",
         list(&bits),
     );
 
+    (content, root_value)
+}
+
+fn write_persona(root: &Path, env: &Env, persona: &Persona) {
+    let (content, _) = prover_content(
+        env,
+        persona,
+        BigUint::from(DEFAULT_INVOICE_HASH),
+        MIN_TOTAL_CENTS,
+        MIN_PAID_COUNT,
+        PERIOD_BUCKET,
+    );
     let proofpay_dir = root.join("circuits/proofpay");
     fs::write(
         proofpay_dir.join(format!("Prover.{}.toml", persona.name)),
@@ -153,6 +207,32 @@ fn main() {
         .parent()
         .and_then(Path::parent)
         .expect("workspace root");
+
+    if let Ok(output) = env::var("PROOFPAY_PROVER_OUTPUT") {
+        let persona_name = env::var("PROOFPAY_PERSONA").unwrap_or_else(|_| "qualified".to_string());
+        let persona = persona_by_name(&persona_name);
+        let invoice_hash = env_biguint(
+            "PROOFPAY_INVOICE_HASH",
+            BigUint::from(DEFAULT_INVOICE_HASH),
+        );
+        let min_total_cents = env_u64("PROOFPAY_MIN_TOTAL_CENTS", MIN_TOTAL_CENTS);
+        let min_paid_count = env_u32("PROOFPAY_MIN_PAID_COUNT", MIN_PAID_COUNT);
+        let period_bucket = env_u32("PROOFPAY_PERIOD_BUCKET", PERIOD_BUCKET);
+        let (content, root_value) = prover_content(
+            &env,
+            &persona,
+            invoice_hash,
+            min_total_cents,
+            min_paid_count,
+            period_bucket,
+        );
+        let output_path = root.join(output);
+        fs::write(&output_path, content).expect("write runtime prover");
+        println!("Wrote {}", output_path.display());
+        println!("Root: {root_value}");
+        return;
+    }
+
     for persona in personas() {
         write_persona(root, &env, &persona);
     }
